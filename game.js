@@ -24,7 +24,7 @@ const STAGES = [
   { name: "神", color: "#fff2b2", light: "#ffffff", shape: "god" },
 ];
 
-const BASE_RADII = [11, 16, 21, 26, 32, 39, 47, 56, 66, 78, 91, 104, 117];
+const BASE_RADII = [22, 28, 35, 43, 52, 62, 73, 85, 98, 112, 127, 143, 160];
 const MAX_BALLS = 62;
 const MAX_PARTICLES = 170;
 const TAU = Math.PI * 2;
@@ -75,7 +75,11 @@ function saveBest(value) {
 
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 function rand(min, max) { return min + random() * (max - min); }
-function stageRadius(tier) { return BASE_RADII[tier] * scaleFactor; }
+function stageRadius(tier) {
+  const scaledRadius = BASE_RADII[tier] * scaleFactor;
+  const boxWidth = rightWall - leftWall;
+  return boxWidth > 0 ? Math.min(scaledRadius, boxWidth * 0.47) : scaledRadius;
+}
 function formatScore(value) { return Math.floor(value).toLocaleString("ja-JP"); }
 
 function resize() {
@@ -210,9 +214,10 @@ function endGame() {
 
 function randomTier() {
   const roll = random();
-  if (roll < 0.018) return 2;
-  if (roll < 0.19) return 1;
-  return 0;
+  if (roll < 0.56) return 0;
+  if (roll < 0.84) return 1;
+  if (roll < 0.96) return 2;
+  return 3;
 }
 
 function startGacha(x) {
@@ -390,6 +395,8 @@ function solvePhysics(dt) {
     }
 
     const used = new Set();
+    let mergedPair = false;
+    pairCheck:
     for (let i = 0; i < balls.length; i++) {
       const a = balls[i];
       for (let j = i + 1; j < balls.length; j++) {
@@ -398,13 +405,19 @@ function solvePhysics(dt) {
         let dy = b.y - a.y;
         let distanceSq = dx * dx + dy * dy;
         const reach = a.r + b.r;
-        if (distanceSq >= reach * reach) continue;
         if (distanceSq < 0.0001) {
           dx = 0.01;
           dy = 0;
           distanceSq = 0.0001;
         }
         const distance = Math.sqrt(distanceSq);
+        const mergeReach = reach + 1.5 * scaleFactor;
+        if (a.tier === b.tier && a.tier < 12 && distanceSq <= mergeReach * mergeReach) {
+          merge(a, b);
+          mergedPair = true;
+          break pairCheck;
+        }
+        if (distanceSq >= reach * reach) continue;
         const nx = dx / distance;
         const ny = dy / distance;
         const overlap = reach - distance;
@@ -434,12 +447,6 @@ function solvePhysics(dt) {
         }
 
         if (used.has(a) || used.has(b)) continue;
-        if (a.tier === b.tier && a.tier < 12) {
-          used.add(a);
-          used.add(b);
-          merge(a, b);
-          break;
-        }
         if (a.tier === 12 || b.tier === 12) {
           used.add(a.tier === 12 ? b : a);
           feedGod(a.tier === 12 ? a : b, a.tier === 12 ? b : a);
@@ -448,6 +455,7 @@ function solvePhysics(dt) {
       }
       if (used.has(a)) continue;
     }
+    if (mergedPair) continue;
   }
 }
 
@@ -599,14 +607,6 @@ function drawHud() {
     ctx.shadowBlur = 0;
   }
 
-  if (state === "playing" && !gacha && dropCooldown <= 0.1) {
-    ctx.globalAlpha = 0.5 + Math.sin(elapsed * 3) * 0.16;
-    ctx.fillStyle = "#bbb5dc";
-    ctx.textAlign = "center";
-    ctx.font = `700 ${10 * scaleFactor}px -apple-system, sans-serif`;
-    ctx.fillText("落とす場所をタップ", width / 2, boxTop - 79 * scaleFactor);
-    ctx.globalAlpha = 1;
-  }
   ctx.restore();
 }
 
@@ -661,26 +661,58 @@ function drawBox() {
 }
 
 function drawNext() {
-  const x = width / 2;
-  const y = boxTop - 29 * scaleFactor;
+  const tier = gacha ? gacha.tier : nextTier;
+  const stage = STAGES[tier];
+  const panelWidth = Math.min(width - 24 * scaleFactor, 206 * scaleFactor);
+  const panelHeight = 78 * scaleFactor;
+  const panelX = (width - panelWidth) / 2;
+  const panelY = boxTop - panelHeight - 8 * scaleFactor;
+  const corner = 14 * scaleFactor;
+  const previewX = panelX + 35 * scaleFactor;
+  const previewY = panelY + panelHeight * 0.5;
+  const previewRadius = Math.min(Math.max(stageRadius(tier), 20 * scaleFactor), 24 * scaleFactor);
+  const textX = panelX + 65 * scaleFactor;
   ctx.save();
-  ctx.textAlign = "center";
+  ctx.shadowColor = stage.color;
+  ctx.shadowBlur = 15 * scaleFactor;
+  ctx.fillStyle = "rgba(26, 25, 48, .94)";
+  roundedRect(panelX, panelY, panelWidth, panelHeight, corner);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.78;
+  ctx.strokeStyle = stage.color;
+  ctx.lineWidth = 1.2 * scaleFactor;
+  roundedRect(panelX, panelY, panelWidth, panelHeight, corner);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  const tier = gacha ? Math.floor(gacha.age / 0.047) % 4 : nextTier;
-  ctx.fillStyle = gacha ? "#ffe4a5" : "#8987a8";
-  ctx.font = `800 ${9 * scaleFactor}px -apple-system, sans-serif`;
-  ctx.fillText(gacha ? "ガチャ中" : `つぎ：${STAGES[tier].name}`, x, y - 23 * scaleFactor);
-  const r = stageRadius(tier);
-  const pulse = gacha ? 1 + Math.sin(gacha.age * 55) * 0.17 : 1;
-  ctx.shadowColor = gacha ? "#fff1a7" : STAGES[tier].color;
-  ctx.shadowBlur = (gacha ? 26 : 13) * scaleFactor;
-  drawSphere(x, y, r * 0.64 * pulse, tier, 0);
+  ctx.fillStyle = "#b9b4d4";
+  ctx.font = `800 ${9.5 * scaleFactor}px -apple-system, sans-serif`;
+  ctx.fillText(gacha ? "ガチャ結果" : "つぎに落ちる玉", textX, panelY + 17 * scaleFactor);
+  ctx.shadowColor = stage.color;
+  ctx.shadowBlur = 8 * scaleFactor;
+  ctx.fillStyle = stage.color;
+  ctx.font = `900 ${15.5 * scaleFactor}px -apple-system, sans-serif`;
+  ctx.fillText(stage.name, textX, panelY + 39 * scaleFactor);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#d7d2ec";
+  ctx.font = `700 ${8.5 * scaleFactor}px -apple-system, sans-serif`;
+  ctx.fillText(gacha ? "まもなく落下" : "落とす場所をタップ", textX, panelY + 62 * scaleFactor);
+
+  const previewPulse = gacha ? 1 + Math.sin(gacha.age * 55) * 0.08 : 1;
+  ctx.shadowColor = stage.color;
+  ctx.shadowBlur = (gacha ? 22 : 13) * scaleFactor;
+  drawSphere(previewX, previewY, previewRadius * previewPulse, tier, gacha ? gacha.age * 4 : 0);
+  drawIcon(previewX, previewY, previewRadius * previewPulse, tier, elapsed * 0.12);
+  if (tier >= 3 && tier <= 5) drawFace(previewX, previewY, previewRadius * previewPulse, tier);
   ctx.shadowBlur = 0;
   if (gacha) {
     ctx.strokeStyle = `rgba(255, 239, 181, ${0.3 + Math.sin(gacha.age * 44) * 0.2})`;
     ctx.lineWidth = 2 * scaleFactor;
     ctx.beginPath();
-    ctx.arc(x, y, r + (5 + Math.sin(gacha.age * 28) * 3) * scaleFactor, elapsed * 6, elapsed * 6 + Math.PI * 1.55);
+    ctx.arc(previewX, previewY, previewRadius + (5 + Math.sin(gacha.age * 28) * 3) * scaleFactor, elapsed * 6, elapsed * 6 + Math.PI * 1.55);
     ctx.stroke();
   }
   ctx.restore();
@@ -1055,11 +1087,11 @@ function draw() {
   drawBackground();
   drawBox();
   drawHud();
-  drawNext();
   drawAim();
   for (const ball of balls) drawBall(ball);
   drawParticles();
   drawFloaters();
+  drawNext();
   drawCrack();
   if (flash > 0) {
     ctx.fillStyle = `rgba(255,250,255,${Math.min(0.64, flash * 0.27)})`;
